@@ -1,0 +1,10 @@
+{
+  "name": "RepFlow Fitness Tracker",
+  "short_name": "RepFlow",
+  "description": "Workout, progress and training-plan tracker.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#08110d",
+  "theme_color": "#10b981",
+  "icons": [{"src":"/favicon.ico","sizes":"48x48","type":"image/x-icon"}]
+}
