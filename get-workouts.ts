@@ -1,0 +1,200 @@
+import { and, asc, desc, eq, sql, type SQLWrapper } from "drizzle-orm";
+
+import type { ExistingWorkoutState_Wire } from "@/data/workouts/workout-state";
+
+import { DELAY_MS } from "@/APPLICATION-SETTINGS";
+import type { DB } from "@/data/db";
+import {
+  workout as workoutTable,
+  workoutSegment as workoutSegmentTable,
+  workoutSegmentExercise as workoutSegmentExerciseTable,
+  workoutSegmentExerciseMeasurement as workoutSegmentExerciseMeasurementTable,
+} from "@/drizzle/schema";
+import { toNumericValue } from "@/lib/toNumericValue";
+
+const WORKOUT_HISTORY_LIMIT = 10;
+const WORKOUT_HISTORY_QUERY_LIMIT = WORKOUT_HISTORY_LIMIT + 1;
+
+type GetWorkoutsOptions = {
+  id?: number;
+  page?: number;
+  userId: string;
+};
+
+type WorkoutsPayload = {
+  workouts: ExistingWorkoutState_Wire[];
+  page: number;
+  hasNextPage: boolean;
+};
+
+export const getWorkouts = async (db: DB, options: GetWorkoutsOptions): Promise<WorkoutsPayload> => {
+  await new Promise(resolve => setTimeout(resolve, DELAY_MS));
+  const page = Math.max(1, Math.floor(options.page ?? 1));
+  const offset = (page - 1) * WORKOUT_HISTORY_LIMIT;
+
+  const whereConditions: SQLWrapper[] = [eq(workoutTable.userId, options.userId)];
+  if (options.id != null) {
+    whereConditions.push(eq(workoutTable.id, options.id));
+  }
+
+  const workoutIds = db.$with("valid_workouts").as(
+    db
+      .select({
+        workout_id: sql<number>`${workoutTable.id}`.as("workout_id"),
+      })
+      .from(workoutTable)
+      .where(whereConditions.length > 0 ? and(...whereConditions) : undefined)
+      .orderBy(desc(workoutTable.workoutDate), desc(workoutTable.id))
+      .limit(WORKOUT_HISTORY_QUERY_LIMIT)
+      .offset(offset),
+  );
+
+  const rows = await db
+    .with(workoutIds)
+    .select({
+      workoutId: workoutTable.id,
+      workoutTemplateId: workoutTable.workoutTemplateId,
+      workoutName: workoutTable.name,
+      workoutDescription: workoutTable.description,
+      workoutDate: workoutTable.workoutDate,
+      segmentRowId: workoutSegmentTable.id,
+      workoutTemplateSegmentId: workoutSegmentTable.workoutTemplateSegmentId,
+      segmentOrder: workoutSegmentTable.segmentOrder,
+      segmentSets: workoutSegmentTable.sets,
+      exerciseRowId: workoutSegmentExerciseTable.id,
+      workoutTemplateSegmentExerciseId: workoutSegmentExerciseTable.workoutTemplateSegmentExerciseId,
+      exerciseOrder: workoutSegmentExerciseTable.exerciseOrder,
+      exerciseExerciseId: workoutSegmentExerciseTable.exerciseId,
+      exerciseExecutionType: workoutSegmentExerciseTable.executionType,
+      exerciseDurationUnit: workoutSegmentExerciseTable.durationUnit,
+      exerciseDistanceUnit: workoutSegmentExerciseTable.distanceUnit,
+      exerciseWeightUnit: workoutSegmentExerciseTable.exerciseWeightUnit,
+      measurementId: workoutSegmentExerciseMeasurementTable.id,
+      workoutTemplateSegmentExerciseMeasurementId:
+        workoutSegmentExerciseMeasurementTable.workoutTemplateSegmentExerciseMeasurementId,
+      templateReps: workoutSegmentExerciseMeasurementTable.templateReps,
+      templateRepsToFailure: workoutSegmentExerciseMeasurementTable.templateRepsToFailure,
+      templateWeightUsed: workoutSegmentExerciseMeasurementTable.templateWeightUsed,
+      templateDuration: workoutSegmentExerciseMeasurementTable.templateDuration,
+      templateDistance: workoutSegmentExerciseMeasurementTable.templateDistance,
+      measurementSetOrder: workoutSegmentExerciseMeasurementTable.setOrder,
+      measurementReps: workoutSegmentExerciseMeasurementTable.reps,
+      measurementWeightUsed: workoutSegmentExerciseMeasurementTable.weightUsed,
+      measurementDuration: workoutSegmentExerciseMeasurementTable.duration,
+      measurementDistance: workoutSegmentExerciseMeasurementTable.distance,
+    })
+    .from(workoutTable)
+    .innerJoin(workoutIds, eq(workoutTable.id, workoutIds.workout_id))
+    .leftJoin(workoutSegmentTable, eq(workoutSegmentTable.workoutId, workoutTable.id))
+    .leftJoin(workoutSegmentExerciseTable, eq(workoutSegmentExerciseTable.workoutSegmentId, workoutSegmentTable.id))
+    .leftJoin(
+      workoutSegmentExerciseMeasurementTable,
+      eq(workoutSegmentExerciseMeasurementTable.workoutSegmentExerciseId, workoutSegmentExerciseTable.id),
+    )
+    .orderBy(
+      desc(workoutTable.workoutDate),
+      desc(workoutTable.id),
+      asc(workoutSegmentTable.segmentOrder),
+      asc(workoutSegmentExerciseTable.exerciseOrder),
+      asc(workoutSegmentExerciseMeasurementTable.setOrder),
+    );
+
+  const workouts = new Map<number, ExistingWorkoutState_Wire>();
+  const segmentsByWorkout = new Map<number, ExistingWorkoutState_Wire["segments"]>();
+  const exercisesBySegment = new Map<number, ExistingWorkoutState_Wire["segments"][number]["exercises"]>();
+
+  for (const row of rows) {
+    let workout = workouts.get(row.workoutId);
+    if (!workout) {
+      workout = {
+        id: row.workoutId,
+        workoutTemplateId: row.workoutTemplateId ?? undefined,
+        name: row.workoutName,
+        description: row.workoutDescription,
+        workoutDate: row.workoutDate,
+        segments: [],
+      };
+
+      workouts.set(row.workoutId, workout);
+      segmentsByWorkout.set(row.workoutId, []);
+    }
+
+    if (row.segmentRowId == null || row.segmentOrder == null || row.segmentSets == null) {
+      continue;
+    }
+
+    const workoutSegments = segmentsByWorkout.get(row.workoutId)!;
+    const latestSegment = workoutSegments.at(-1);
+    let segment = latestSegment?.id === row.segmentRowId ? latestSegment : undefined;
+    if (!segment) {
+      segment = {
+        id: row.segmentRowId,
+        workoutId: row.workoutId,
+        workoutTemplateSegmentId: row.workoutTemplateSegmentId ?? undefined,
+        segmentOrder: row.segmentOrder,
+        sets: row.segmentSets,
+        exercises: [],
+      };
+
+      workoutSegments.push(segment);
+      exercisesBySegment.set(row.segmentRowId, []);
+      workout.segments.push(segment);
+    }
+
+    if (row.exerciseRowId == null || row.exerciseOrder == null || row.exerciseExerciseId == null) {
+      continue;
+    }
+
+    const segmentExercises = exercisesBySegment.get(row.segmentRowId)!;
+    const latestExercise = segmentExercises.at(-1);
+    let exercise = latestExercise?.id === row.exerciseRowId ? latestExercise : undefined;
+    if (!exercise) {
+      exercise = {
+        id: row.exerciseRowId,
+        workoutSegmentId: row.segmentRowId,
+        workoutTemplateSegmentExerciseId: row.workoutTemplateSegmentExerciseId ?? undefined,
+        exerciseOrder: row.exerciseOrder,
+        exerciseId: row.exerciseExerciseId,
+        executionType: row.exerciseExecutionType ?? null,
+        exerciseWeightUnit: row.exerciseWeightUnit ?? null,
+        durationUnit: row.exerciseDurationUnit ?? null,
+        distanceUnit: row.exerciseDistanceUnit ?? null,
+        repsToFailure: false,
+        reps: [],
+        measurements: [],
+      };
+
+      segmentExercises.push(exercise);
+      segment.exercises.push(exercise);
+    }
+
+    if (row.measurementSetOrder != null) {
+      exercise.reps?.push(row.measurementReps ?? null);
+      exercise.measurements.push({
+        id: row.measurementId ?? undefined,
+        workoutSegmentExerciseId: row.exerciseRowId,
+        workoutTemplateSegmentExerciseMeasurementId: row.workoutTemplateSegmentExerciseMeasurementId ?? undefined,
+        templateReps: row.templateReps ?? undefined,
+        templateRepsToFailure: row.templateRepsToFailure ?? undefined,
+        templateWeightUsed: row.templateWeightUsed ?? undefined,
+        templateDuration: row.templateDuration ?? undefined,
+        templateDistance: row.templateDistance ?? undefined,
+        setOrder: row.measurementSetOrder,
+        reps: row.measurementReps,
+        weightUsed: toNumericValue(row.measurementWeightUsed),
+        duration: row.measurementDuration,
+        distance: row.measurementDistance,
+      });
+    }
+  }
+
+  const workoutList = Array.from(workouts.values());
+  const hasNextPage = workoutList.length > WORKOUT_HISTORY_LIMIT;
+  const currentPageWorkouts = hasNextPage ? workoutList.slice(0, WORKOUT_HISTORY_LIMIT) : workoutList;
+
+  return {
+    workouts: currentPageWorkouts,
+    page,
+    hasNextPage,
+  };
+};

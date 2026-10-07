@@ -1,0 +1,176 @@
+import { Fragment, useEffect, useState, type FC } from "react";
+import { cn } from "cn";
+
+import { useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+
+import { Workout } from "@/components/edit-workout/Workout";
+import { ImportWorkoutTemplate } from "@/components/ImportWorkoutTemplate";
+import { SuspensePageLayout } from "@/components/SuspensePageLayout";
+
+import { toast } from "sonner";
+import { useWorkoutForm } from "@/lib/workout-form";
+import { exercisesQueryOptions } from "@/server-functions/exercises";
+import { saveWorkout, workoutHistoryQueryOptions } from "@/server-functions/workouts";
+import { muscleGroupsQueryOptions } from "@/server-functions/muscle-groups";
+import { Button } from "@/components/ui/button";
+import {
+  createDefaultWorkout,
+  defaultworkoutDate,
+  type WorkoutSegmentExerciseMeasurementState,
+  type WorkoutSegmentExerciseState,
+  type WorkoutState_Local,
+} from "@/data/workouts/workout-state";
+import type { WorkoutTemplateState } from "@/data/workout-templates/workout-state";
+import { formatDateForPg } from "@/lib/utils";
+
+export const Route = createFileRoute("/app/log-workout/")({
+  loader: ({ context }) => {
+    context.queryClient.ensureQueryData(exercisesQueryOptions());
+    context.queryClient.ensureQueryData(muscleGroupsQueryOptions());
+  },
+  component: RouteComponent,
+});
+
+const templateToWorkout = (template: WorkoutTemplateState, workoutDate: Date | null): WorkoutState_Local => {
+  return {
+    ...template,
+    workoutTemplateId: template.id,
+    workoutDate: workoutDate ?? defaultworkoutDate(),
+    segments: template.segments.map(segment => {
+      return {
+        ...segment,
+        workoutTemplateSegmentId: segment.id,
+        exercises: segment.exercises.map(exercise => {
+          const segmentMeasurements = exercise.measurements.map(
+            (measurement, measurementIndex) =>
+              ({
+                ...measurement,
+                workoutTemplateSegmentExerciseMeasurementId: measurement.id,
+                duration: null,
+                distance: null,
+                weightUsed: null,
+                reps: null,
+                workoutSegmentExerciseId: 0,
+                setOrder: measurementIndex + 1,
+
+                templateDistance: measurement.distance ?? undefined,
+                templateDuration: measurement.duration ?? undefined,
+                templateReps: measurement.reps ?? undefined,
+                templateWeightUsed: measurement.weightUsed ?? undefined,
+                templateRepsToFailure: measurement.repsToFailure ?? undefined,
+              }) satisfies WorkoutSegmentExerciseMeasurementState,
+          );
+
+          return {
+            ...exercise,
+            workoutSegmentId: 0,
+            workoutTemplateSegmentExerciseId: exercise.id,
+            repsToFailure: segmentMeasurements.some(measurement => measurement.repsToFailure === true),
+            measurements: segmentMeasurements,
+          } satisfies WorkoutSegmentExerciseState;
+        }),
+      };
+    }),
+  };
+};
+
+function RouteComponent() {
+  const [workoutState, setWorkoutState] = useState<WorkoutState_Local>(createDefaultWorkout());
+  const [currentWorkoutDate, setCurrentWorkoutDate] = useState<Date | null>(null);
+  return (
+    <SuspensePageLayout
+      title="Log Workout"
+      headerChildren={
+        <ImportWorkoutTemplate
+          onSelected={template => setWorkoutState(templateToWorkout(template, currentWorkoutDate))}
+        />
+      }
+    >
+      <RenderWorkoutForm
+        workoutState={workoutState}
+        setWorkoutDate={setCurrentWorkoutDate}
+        onReset={() => setWorkoutState(createDefaultWorkout())}
+      />
+    </SuspensePageLayout>
+  );
+}
+
+type RenderWorkoutFormProps = {
+  workoutState: WorkoutState_Local;
+  setWorkoutDate: (workoutDate: Date | null) => void;
+  onReset: () => void;
+};
+const RenderWorkoutForm: FC<RenderWorkoutFormProps> = props => {
+  const { workoutState, setWorkoutDate, onReset } = props;
+  const [formResetKey, setFormResetKey] = useState(0);
+
+  useEffect(() => {
+    setFormResetKey(key => key + 1);
+  }, [workoutState]);
+
+  return (
+    <Fragment key={formResetKey}>
+      <WorkoutFormContent workoutState={workoutState} setWorkoutDate={setWorkoutDate} onReset={() => onReset()} />
+    </Fragment>
+  );
+};
+
+type WorkoutFormContentProps = {
+  workoutState: WorkoutState_Local;
+  setWorkoutDate: (workoutDate: Date | null) => void;
+  onReset: () => void;
+};
+
+const WorkoutFormContent: FC<WorkoutFormContentProps> = props => {
+  const { workoutState, setWorkoutDate, onReset } = props;
+
+  const { data: exercises } = useSuspenseQuery(exercisesQueryOptions());
+  const { data: muscleGroups } = useSuspenseQuery(muscleGroupsQueryOptions());
+
+  const [isSaving, setIsSaving] = useState(false);
+
+  const queryClient = useQueryClient();
+  const navigate = useNavigate();
+
+  const form = useWorkoutForm(async state => {
+    setIsSaving(true);
+
+    await saveWorkout({ data: { ...state, workoutDate: formatDateForPg(state.workoutDate!) } });
+
+    queryClient.invalidateQueries({
+      queryKey: workoutHistoryQueryOptions({ page: 1 }).queryKey,
+    });
+    navigate({ to: "/app/workouts", search: { page: 1 } });
+
+    toast.success("Workout created", { position: "top-center" });
+  }, workoutState);
+
+  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    await form.validateAllFields("submit");
+    await form.handleSubmit();
+  };
+
+  return (
+    <form onSubmit={handleSubmit} noValidate>
+      <Workout form={form} exercises={exercises} muscleGroups={muscleGroups} setWorkoutDate={setWorkoutDate} />
+      <div className="flex mt-8">
+        <Button type="submit" disabled={isSaving} className={cn("font-semibold", isSaving ? "" : "cursor-pointer")}>
+          {isSaving ? "Saving..." : "Create workout"}
+        </Button>
+        <Button
+          type="button"
+          variant="secondary"
+          disabled={isSaving}
+          className={cn("font-semibold ml-auto", isSaving ? "" : "cursor-pointer")}
+          onClick={onReset}
+        >
+          Reset workout
+        </Button>
+      </div>
+    </form>
+  );
+};

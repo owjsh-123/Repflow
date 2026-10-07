@@ -1,0 +1,81 @@
+import { and, eq, exists, inArray, not, sql } from "drizzle-orm";
+import { DELAY_MS } from "@/APPLICATION-SETTINGS";
+import type { DB } from "@/data/db";
+import { exercises as exercisesTable, muscleGroup } from "@/drizzle/schema";
+
+export type CreateExerciseInput = typeof exercisesTable.$inferInsert;
+
+export type CreateExerciseResult =
+  | {
+      error: true;
+      message: "This exercise exists";
+      code: "EXERCISE_EXISTS";
+    }
+  | {
+      error: false;
+      id: number;
+    };
+
+export const createExercise = async (db: DB, input: CreateExerciseInput): Promise<CreateExerciseResult> => {
+  await new Promise(resolve => setTimeout(resolve, DELAY_MS));
+
+  const normalizedName = input.name.trim();
+  const muscleGroupIds = Array.from(new Set(input.muscleGroups));
+
+  if (muscleGroupIds.length > 0) {
+    const [mismatchedMuscleGroup] = await db
+      .select({ securityCheckFailed: sql`0` })
+      .from(muscleGroup)
+      .where(
+        exists(
+          db
+            .select({ id: muscleGroup.id })
+            .from(muscleGroup)
+            .where(and(inArray(muscleGroup.id, muscleGroupIds), not(eq(muscleGroup.userId, input.userId)))),
+        ),
+      );
+
+    if (mismatchedMuscleGroup != null) {
+      throw new Error("One or more muscle groups were not found.");
+    }
+  }
+
+  const existingExerciseResults = await db
+    .select({ id: exercisesTable.id })
+    .from(exercisesTable)
+    .where(and(eq(exercisesTable.userId, input.userId), eq(exercisesTable.name, normalizedName)));
+
+  const existingExercise = existingExerciseResults[0];
+
+  if (existingExercise) {
+    return {
+      error: true,
+      message: "This exercise exists",
+      code: "EXERCISE_EXISTS",
+    };
+  }
+
+  const insertedResults = await db
+    .insert(exercisesTable)
+    .values({
+      userId: input.userId,
+      name: normalizedName,
+      description: input.description ?? null,
+      muscleGroups: input.muscleGroups,
+      isCompound: input.isCompound ?? null,
+      isBodyweight: input.isBodyweight ?? null,
+      executionType: input.executionType,
+    })
+    .returning({ id: exercisesTable.id });
+
+  const insertedExercise = insertedResults[0];
+
+  if (!insertedExercise) {
+    throw new Error("Insert failed for exercise.");
+  }
+
+  return {
+    error: false,
+    id: insertedExercise.id,
+  };
+};

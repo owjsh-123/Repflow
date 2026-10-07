@@ -1,0 +1,117 @@
+import { workout, workoutSegment, workoutSegmentExercise, workoutSegmentExerciseMeasurement } from "@/drizzle/schema";
+
+export type Workout = typeof workout.$inferInsert;
+export type WorkoutSegment = typeof workoutSegment.$inferInsert;
+export type WorkoutSegmentExercise = typeof workoutSegmentExercise.$inferInsert;
+export type WorkoutSegmentExerciseMeasurement = typeof workoutSegmentExerciseMeasurement.$inferInsert;
+export type WorkoutSegmentExerciseMeasurementState = Omit<
+  WorkoutSegmentExerciseMeasurement,
+  "workoutSegmentExerciseId"
+> & {
+  id?: number;
+  workoutSegmentExerciseId?: number;
+  workoutTemplateSegmentExerciseMeasurementId?: number;
+  templateReps?: string;
+  templateWeightUsed?: string;
+  templateDuration?: string;
+  templateDistance?: string;
+};
+
+export type WorkoutSegmentExerciseState = Omit<WorkoutSegmentExercise, "workoutSegmentId"> & {
+  id?: number;
+  workoutSegmentId?: number;
+  workoutTemplateSegmentExerciseId?: number;
+  reps?: Array<number | null>;
+  repsToFailure?: boolean;
+  measurements: WorkoutSegmentExerciseMeasurementState[];
+};
+
+export type SegmentWithExercises = Omit<WorkoutSegment, "workoutId"> & {
+  id?: number;
+  workoutTemplateSegmentId?: number;
+  workoutId?: number;
+  exercises: WorkoutSegmentExerciseState[];
+};
+
+export type WorkoutState_Local = Omit<Workout, "userId" | "workoutDate"> & {
+  id?: number;
+  workoutDate: Date | null;
+  workoutTemplateId?: number;
+  segments: SegmentWithExercises[];
+};
+
+export type WorkoutState = Omit<WorkoutState_Local, "workoutDate"> & {
+  workoutDate: string;
+};
+
+export type ExistingWorkoutState = Omit<Workout, "userId" | "workoutDate"> & {
+  id: number;
+  workoutDate: Date | null; //TODO:
+  workoutTemplateId?: number;
+  segments: SegmentWithExercises[];
+};
+
+export type ExistingWorkoutState_Wire = Omit<ExistingWorkoutState, "workoutDate"> & {
+  workoutDate: string;
+};
+
+export type Exercise = SegmentWithExercises["exercises"][number];
+export type Measurement = SegmentWithExercises["exercises"][number]["measurements"][number];
+
+const DEFAULT_SET_COUNT = 4;
+
+const defaultExercise: WorkoutSegmentExercise = {
+  exerciseId: 0,
+  exerciseOrder: 1,
+  workoutSegmentId: 0,
+};
+
+let newExerciseId = -1;
+export const createDefaultExercise = (sets?: number): WorkoutSegmentExerciseState => {
+  const measurementCount = sets ?? DEFAULT_SET_COUNT;
+
+  return {
+    ...defaultExercise,
+    id: newExerciseId--,
+    executionType: "repetition" as const,
+    repsToFailure: false,
+    reps: Array.from({ length: measurementCount }, () => 8),
+    workoutTemplateSegmentExerciseId: undefined,
+    measurements: Array.from({ length: measurementCount }, (_, index) => ({
+      workoutSegmentExerciseId: 0,
+      setOrder: index + 1,
+      reps: 8,
+      repsToFailure: false,
+      weightUsed: null,
+    })),
+  };
+};
+
+const defaultSegment: WorkoutSegment = {
+  segmentOrder: 1,
+  sets: 4,
+  workoutId: 0,
+};
+
+let newSegmentId = -1;
+export const createDefaultSegment = (): SegmentWithExercises => {
+  return {
+    ...defaultSegment,
+    id: newSegmentId--,
+    workoutTemplateSegmentId: undefined,
+    exercises: [createDefaultExercise()],
+  };
+};
+
+export const defaultworkoutDate = () => {
+  return new Date();
+};
+
+export const createDefaultWorkout = (workoutDate: Date | null = null): WorkoutState_Local => {
+  return {
+    name: "",
+    workoutDate: workoutDate ?? null,
+    description: "",
+    segments: [createDefaultSegment()],
+  };
+};
