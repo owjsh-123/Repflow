@@ -1,0 +1,290 @@
+import { type FC } from "react";
+import { Trash2 } from "lucide-react";
+
+import { InnerCard } from "@/components/InnerCard";
+import { ExecutionTypeSelect, type ExecutionType } from "@/components/ExecutionTypeSelect";
+import { ExerciseSelector, type Exercise } from "@/components/ExerciseSelector";
+import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import type { WorkoutForm } from "@/lib/workout-form";
+import type { DurationUnit, MuscleGroup } from "@/data/types";
+import { defaultDistanceUnit, defaultDurationUnit, defaultExerciseWeightUnit } from "@/data/constants";
+import { RepetitionExerciseSet } from "./RepetitionExerciseSet";
+import { DistanceExerciseSet } from "./DistanceExerciseSet";
+import { DurationExerciseSet } from "./DurationExerciseSet";
+
+type WorkoutSegmentExerciseProps = {
+  form: WorkoutForm;
+  exercises: Exercise[];
+  muscleGroups: MuscleGroup[];
+  segmentIndex: number;
+  exerciseIndex: number;
+  canRemove: boolean;
+  onRemove: () => void;
+};
+
+const DEFAULT_EXECUTION_TYPE: ExecutionType = "repetition";
+
+const getExerciseExecutionType = (exercise: Exercise | undefined): ExecutionType => {
+  const executionType = exercise?.executionType;
+  if (executionType === "repetition" || executionType === "distance" || executionType === "time") {
+    return executionType;
+  }
+
+  return DEFAULT_EXECUTION_TYPE;
+};
+
+export const WorkoutSegmentExercise: FC<WorkoutSegmentExerciseProps> = ({
+  form,
+  exercises,
+  muscleGroups,
+  segmentIndex,
+  exerciseIndex,
+  canRemove,
+  onRemove,
+}) => {
+  const idx = segmentIndex;
+  const exIdx = exerciseIndex;
+
+  return (
+    <InnerCard className="flex flex-col gap-4">
+      <div className="grid gap-2 grid-rows-2 grid-cols-[auto_auto] md:grid-rows-1 md:grid-cols-[auto_auto_1fr]">
+        <form.Field
+          name={`segments[${segmentIndex}].exercises[${exerciseIndex}].exerciseId`}
+          validators={{
+            onSubmit: ({ value }) => {
+              if (!value) {
+                return "Required";
+              }
+            },
+          }}
+          children={segmentExercise => (
+            <>
+              <label className="flex flex-col gap-2 text-sm w-full order-0">
+                <ExerciseSelector
+                  value={segmentExercise.state.value ?? null}
+                  exercises={exercises}
+                  muscleGroups={muscleGroups}
+                  className="max-w-full sm:max-w-64"
+                  onSelect={exerciseId => {
+                    segmentExercise.handleChange(exerciseId);
+                    const nextSelectedExercise = exercises.find(exercise => exercise.id === exerciseId)!;
+
+                    form.setFieldValue(
+                      `segments[${segmentIndex}].exercises[${exerciseIndex}].exerciseId`,
+                      nextSelectedExercise.id,
+                    );
+                    form.setFieldValue(
+                      `segments[${segmentIndex}].exercises[${exerciseIndex}].distanceUnit`,
+                      defaultDistanceUnit,
+                    );
+                    form.setFieldValue(
+                      `segments[${segmentIndex}].exercises[${exerciseIndex}].durationUnit`,
+                      defaultDurationUnit,
+                    );
+                    form.setFieldValue(
+                      `segments[${segmentIndex}].exercises[${exerciseIndex}].executionType`,
+                      getExerciseExecutionType(nextSelectedExercise),
+                    );
+                    form.setFieldValue(
+                      `segments[${segmentIndex}].exercises[${exerciseIndex}].exerciseWeightUnit`,
+                      defaultExerciseWeightUnit,
+                    );
+                  }}
+                />
+                {!segmentExercise.state.meta.isValid &&
+                  segmentExercise.state.meta.errors.map((error, idx) => (
+                    <span key={`error-${idx}`} className="text-red-500 text-xs">
+                      {error}
+                    </span>
+                  ))}
+              </label>
+              <form.Subscribe
+                selector={state => {
+                  const exerciseId = state.values.segments[idx].exercises[exIdx].exerciseId;
+
+                  const selectedExercise = exercises.find(exercise => exercise.id === exerciseId);
+                  const executionType = state.values.segments[idx].exercises[exIdx].executionType;
+
+                  return {
+                    exerciseId,
+                    hasExercise: exerciseId != null && exerciseId > 0,
+                    selectedExercise,
+                    executionType,
+                  };
+                }}
+              >
+                {formState => (
+                  <div className="order-2 col-span-2 md:col-span-1 md:order-2 flex flex-wrap gap-2">
+                    {formState.hasExercise ? (
+                      <>
+                        <ExecutionTypeSelect
+                          value={formState.executionType ?? "repetition"}
+                          onValueChange={value => {
+                            form.setFieldValue(
+                              `segments[${segmentIndex}].exercises[${exerciseIndex}].executionType`,
+                              value,
+                            );
+                          }}
+                        />
+                        {formState.executionType === "repetition" && !formState.selectedExercise?.isBodyweight ? (
+                          <form.Field
+                            name={`segments[${segmentIndex}].exercises[${exerciseIndex}].exerciseWeightUnit`}
+                            validators={{
+                              onSubmit: ({ value }) => {
+                                const measurements =
+                                  form.state.values.segments[segmentIndex]?.exercises[exerciseIndex]?.measurements;
+                                const hasWeightValue = measurements?.some(
+                                  measurement => measurement.weightUsed != null && measurement.weightUsed != null,
+                                );
+
+                                if (hasWeightValue && value == null) {
+                                  return "Required";
+                                }
+                              },
+                            }}
+                            children={exerciseWeightUnitField => (
+                              <Select
+                                value={exerciseWeightUnitField.state.value ?? undefined}
+                                onValueChange={value => {
+                                  exerciseWeightUnitField.handleChange(value as any);
+                                }}
+                              >
+                                <SelectTrigger className="w-28">
+                                  <SelectValue placeholder="Unit" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="lbs">lbs</SelectItem>
+                                  <SelectItem value="kg">kg</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            )}
+                          />
+                        ) : null}
+                        {formState.executionType === "distance" ? (
+                          <form.Field
+                            name={`segments[${segmentIndex}].exercises[${exerciseIndex}].distanceUnit`}
+                            validators={{
+                              onSubmit: ({ value }) => {
+                                const measurements =
+                                  form.state.values.segments[segmentIndex]?.exercises[exerciseIndex]?.measurements;
+                                const hasDistanceValue = measurements?.some(
+                                  measurement => measurement.distance != null && measurement.distance != null,
+                                );
+
+                                if (hasDistanceValue && value == null) {
+                                  return "Required";
+                                }
+                              },
+                            }}
+                            children={distanceUnitField => (
+                              <Select
+                                value={distanceUnitField.state.value ?? undefined}
+                                onValueChange={value => {
+                                  distanceUnitField.handleChange(value as any);
+                                }}
+                              >
+                                <SelectTrigger className="w-28">
+                                  <SelectValue placeholder="Unit" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="feet">Feet</SelectItem>
+                                  <SelectItem value="yards">Yards</SelectItem>
+                                  <SelectItem value="miles">Miles</SelectItem>
+                                  <SelectItem value="km">Km</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            )}
+                          />
+                        ) : null}
+                        {formState.executionType === "time" ? (
+                          <form.Field
+                            name={`segments[${segmentIndex}].exercises[${exerciseIndex}].durationUnit`}
+                            validators={{
+                              onSubmit: ({ value }) => {
+                                const measurements =
+                                  form.state.values.segments[segmentIndex]?.exercises[exerciseIndex]?.measurements;
+                                const hasDurationValue = measurements?.some(
+                                  measurement => measurement.duration != null && measurement.duration != null,
+                                );
+
+                                if (hasDurationValue && value == null) {
+                                  return "Required";
+                                }
+                              },
+                            }}
+                            children={durationUnitField => (
+                              <Select
+                                value={durationUnitField.state.value ?? undefined}
+                                onValueChange={(value: DurationUnit) => {
+                                  durationUnitField.handleChange(value);
+                                }}
+                              >
+                                <SelectTrigger className="w-28">
+                                  <SelectValue placeholder="Unit" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="seconds">Seconds</SelectItem>
+                                  <SelectItem value="minutes">Minutes</SelectItem>
+                                  <SelectItem value="hours">Hours</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            )}
+                          />
+                        ) : null}
+                      </>
+                    ) : null}
+                  </div>
+                )}
+              </form.Subscribe>
+            </>
+          )}
+        />
+
+        <Button
+          type="button"
+          onClick={onRemove}
+          disabled={!canRemove}
+          variant="secondary"
+          size="xs"
+          className="disabled:cursor-not-allowed cursor-pointer order-1 md:order-3 w-fit ml-auto"
+        >
+          <Trash2 className="size-3.5" aria-hidden="true" />
+          Remove
+        </Button>
+      </div>
+
+      <form.Subscribe
+        selector={state => {
+          const selectedExerciseId = state.values.segments[idx].exercises[exIdx].exerciseId;
+          const executionType = state.values.segments[idx].exercises[exIdx].executionType;
+
+          const selectedExercise = exercises.find(exercise => exercise.id === selectedExerciseId);
+          const isBodyweight = selectedExercise?.isBodyweight ?? false;
+
+          return {
+            hasExercise: selectedExerciseId != null && selectedExerciseId > 0,
+            selectedExerciseId,
+            executionType,
+            isBodyweight,
+          };
+        }}
+      >
+        {formState =>
+          !formState.selectedExerciseId || formState.executionType === "repetition" ? (
+            <RepetitionExerciseSet
+              form={form}
+              segmentIndex={segmentIndex}
+              exerciseIndex={exerciseIndex}
+              showWeightUsed={formState.hasExercise && !formState.isBodyweight}
+            />
+          ) : formState.executionType === "distance" ? (
+            <DistanceExerciseSet form={form} segmentIndex={segmentIndex} exerciseIndex={exerciseIndex} />
+          ) : (
+            <DurationExerciseSet form={form} segmentIndex={segmentIndex} exerciseIndex={exerciseIndex} />
+          )
+        }
+      </form.Subscribe>
+    </InnerCard>
+  );
+};
