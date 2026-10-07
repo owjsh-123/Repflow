@@ -1,0 +1,20 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "fitness-tracker",
+  "compatibility_date": "2025-09-02",
+  "compatibility_flags": ["nodejs_compat"],
+  "main": "@tanstack/react-start/server-entry",
+  "hyperdrive": [
+    {
+      "binding": "HYPERDRIVE",
+      "id": "dd0103f82a11410b91c8fb5752050a21",
+    },
+  ],
+  "observability": {
+    "enabled": true,
+  },
+  "upload_source_maps": true,
+  "placement": {
+    "region": "aws:us-east-1",
+  },
+}
